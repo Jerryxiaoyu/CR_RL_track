@@ -7,10 +7,10 @@ import torch.nn as nn
 import torch.utils.data as Data
 from torch.autograd import Variable
 import torch.optim as optim
-from core.shell.cost import cost, cost_halfcheetah
+from core.shell.cost import cost, cost_halfcheetah, cost_halfcheetah_com
 from core.utils import log
 import matplotlib.pyplot as plt
-from MB.eval_model import plot_train, plot_train_std,load_data
+#from MB.eval_model import plot_train, plot_train_std,load_data
 
 
 PLOT_EVERY_N_EPOCH =10
@@ -49,7 +49,8 @@ def rollout(env, policy,  max_steps=100 , init_particle=None, render=False ):
         s_next, reward, done, _ = env.step(a.data.cpu().numpy())
         cost = -reward
         # Record data
-        data.append(np.concatenate([s.data.cpu().numpy()[0], a.data.cpu().numpy(), s_next, np.array([cost])]))
+ 
+        data.append(np.concatenate([s.data.cpu().numpy()[0], a.data.cpu().numpy().squeeze(), s_next, np.array([cost])]))
         # break if done
         if done:
             break
@@ -170,7 +171,7 @@ def train_dynamics_model(dynamics, dynamics_optimizer, trainset, epochs=1, batch
         
         time_duration = time.time() - start_time
         # Logging: Only first, middle and last
-        if epoch == 0 or epoch == epochs // 2 or epoch == epochs - 1:
+        if epoch == 0 or epoch == epochs // 20 or epoch == epochs - 1:
             log.info('[Epoch # {:3d} ({:.1f} s)] Train loss: {:.8f}'.format(epoch + 1, time_duration, batch_train_loss))
 
         if epoch % LOG_EVERY_N_EPOCH == 0:
@@ -190,9 +191,9 @@ def train_dynamics_model(dynamics, dynamics_optimizer, trainset, epochs=1, batch
     return np.array(list_train_loss)
 
 
-(_, _), (x_test, y_test) = load_data()
-(_, _), (x_test2, y_test2) = load_data(
-    dir_name='/home/drl/PycharmProjects/DeployedProjects/deepPILCO/MB/data/log-test1.csv', data_num=1000)
+# (_, _), (x_test, y_test) = load_data()
+# (_, _), (x_test2, y_test2) = load_data(
+#     dir_name='/home/drl/PycharmProjects/DeployedProjects/deepPILCO/MB/data/log-test1.csv', data_num=1000)
 
 
 def train_dynamics_model_pilco(dynamics, dynamics_optimizer, trainset, epochs=1, batch_size=1, eval_fn=None,logger=None ,**kwargs):
@@ -261,37 +262,22 @@ def train_dynamics_model_pilco(dynamics, dynamics_optimizer, trainset, epochs=1,
         # Logging: Only first, middle and last
     
         if epoch % LOG_EVERY_N_EPOCH == 0:
-            if dynamics.env.spec.id == 'HalfCheetah-v2':
-                eval_mse  = plot_train(x_test, y_test, dyn_model=dynamics, pre_process=kwargs['pre_process'], plot=False)
-                eval_mse2 = plot_train(x_test2, y_test2, dyn_model=dynamics, pre_process=kwargs['pre_process'], plot=False)
-            #log.info('[Epoch # {:3d} ({:.1f} s)] Train loss: {:.8f} Eval loss1: {:.8f} Eval loss2: {:.8f}'.format(epoch + 1, time_duration, batch_train_loss, eval_mse, eval_mse2))
-            else:
-                eval_mse =0
-                eval_mse2=0
+            
             if logger is not None:
                 logger.log({'epoch': epoch,
                             'time_duration':time_duration,
                             'Train loss': batch_train_loss,
-                            'Eval loss': eval_mse,
-                            'Eval loss_export': eval_mse2,
+ 
                             })
                 logger.write(display=False)
             
         if epoch == 0 or epoch == epochs // 2 or epoch == epochs - 1:
             log.info(
-                '[Epoch # {:3d} ({:.1f} s)] Train loss: {:.8f} Eval loss1: {:.8f} Eval loss2: {:.8f}'.format(epoch + 1,
+                '[Epoch # {:3d} ({:.1f} s)] Train loss: {:.8f}  '.format(epoch + 1,
                                                                                                              time_duration,
-                                                                                                             batch_train_loss,
-                                                                                                             eval_mse,
-                                                                                                             eval_mse2))
+                                                                                                             batch_train_loss))
 
-        if epoch % PLOT_EVERY_N_EPOCH == 0:
-            if kwargs['plot_train'] is not None:
-                if callable(kwargs['plot_train']):
-                    if epoch == 0:
-                        plt.ion()
-                    kwargs['plot_train'](dynamics)
-
+        
 
     if logger is not None:
         logger.close()
@@ -461,13 +447,16 @@ def learn_policy(env, dynamics, policy, policy_optimizer, K=1, T=1, gamma=0.99, 
 
 
 def learn_policy_pilco(env, dynamics, policy, policy_optimizer, K=1, T=1, gamma=0.99, init_particles=None,
-                 moment_matching=True, c_sigma=0.25, grad_norm=None, pre_prcess=True):
+                 moment_matching=True, c_sigma=0.25, grad_norm=None, pre_prcess=True, shaping_state_delta= False):
     # Particles for initial state
     if init_particles is not None:
         particles = Variable(torch.Tensor(init_particles)).cuda()
     else:
         particles = Variable(torch.Tensor([env.reset() for _ in range(K)])).cuda()
+
+    shaping_state_constant = 9 if shaping_state_delta else 3
     
+    goal = particles[:,-shaping_state_constant:]
     # Sample BNN dynamics: fixed dropout masks
     # dynamics.set_sampling(sampling=True, batch_size=K)
     
@@ -500,7 +489,7 @@ def learn_policy_pilco(env, dynamics, policy, policy_optimizer, K=1, T=1, gamma=
             z = Variable(torch.randn(K, sigma.size(0))).cuda()
             # Sample K new particles from a Gaussian by location-scale transformation/reparameterization
             # TODO rewrite sigma
-            particles_next = mu + sigma * Variable(torch.eye(K, sigma.size(0))).cuda()
+            particles_next = mu + sigma * Variable(torch.ones((K, sigma.size(0)))).cuda()
             
             # Record mu and sigma
             list_moments.append([mu, sigma])
@@ -509,12 +498,13 @@ def learn_policy_pilco(env, dynamics, policy, policy_optimizer, K=1, T=1, gamma=
         
         # Compute the mean cost for the particles in the current time step
         # costs = torch.mean(cost(particles, sigma=c_sigma))
-       # costs = cost(torch.mean(particles, 0).unsqueeze(0), sigma=c_sigma)
+        # costs = cost(torch.mean(particles, 0).unsqueeze(0), sigma=c_sigma)
         
-        
-        costs = cost_halfcheetah(torch.mean(particles_next,0).unsqueeze(0), torch.mean(particles,0).unsqueeze(0))
+      #  costs = cost_halfcheetah(torch.mean(particles_next,0).unsqueeze(0), torch.mean(particles,0).unsqueeze(0))
+        costs = cost_halfcheetah_com( torch.mean(particles, 0), torch.mean(actions,0).unsqueeze(0), state_delat = shaping_state_delta)
 
-        particles = particles_next
+ 
+        particles = torch.cat((particles_next,goal),1)
         
         # Append the list of discounted costs
         list_costs.append((gamma ** (t + 1)) * costs)
@@ -571,9 +561,11 @@ def test_episodic_cost(env, policy,dynamics, N=1, T=1, render=False):
     return -np.mean(ep_reward)/T, np.std(ep_reward)/T
 
 
-def test_episodic_cost2(env, policy, dynamics, N=1, T=1, render=False):
+def test_episodic_cost2(env, policy, dynamics=None, N=1, T=1, render=False):
     ep_reward = []
-    
+    policy.set_sampling(sampling=False )
+    #policy.train(mode=True)
+    policy.eval()
     for _ in range(N):  # N episodes
         # Initial state
         s = env.reset()
@@ -586,17 +578,16 @@ def test_episodic_cost2(env, policy, dynamics, N=1, T=1, render=False):
             # Xm = dynamics.Xm[:env.observation_space.shape[0]]
             # Xs = dynamics.Xstd[:env.observation_space.shape[0]]
             # s = (s - Xm) / Xs
-            
+
             # Select action via policy
-            a = policy(s).data.cpu().numpy()
+            a = policy(s).data.cpu().numpy()[0]
             # Take action in the environment
             s_next, r, done, info = env.step(a)
-            
             # Record reward
             reward.append(r)
             
             # Update new state
-            s = Variable(torch.Tensor(s_next).unsqueeze(0)).cuda()
+            s = Variable(torch.Tensor(s_next ).unsqueeze(0)).cuda()
             
             if render:
                 env.render()

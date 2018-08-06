@@ -50,12 +50,12 @@ def fkine_pos(com_point, q):
 
 
 
-def desired_Body(current_time):
+def desired_Body(current_time, switch_time):
     
     qz =[0,0,0,0,0,0]
-    desired_speed = 0.2     #0.2m/s
+    desired_speed = 0.2    #0.2m/s
     
-    com_p = [desired_speed*(current_time+1), 0, 0 ]
+    com_p = [desired_speed*(current_time+switch_time), 0, 0 ]
 
     com, p1, p2 = fkine_pos(com_p, qz)
     
@@ -76,11 +76,13 @@ def _iner_test():
     F1 = np.array(F1).reshape((1000,3))
     F2 = np.array(F2).reshape((1000,3))
   
-    
     plt.plot(t, com_P, label = 'com')
     plt.plot(t, F1[:,0], label= 'F1')
     plt.plot(t, F2[:,0], label='F2')
     plt.legend()
     plt.show()
 
- 
+# qz=[0,0,0,0,0,0]
+# print(fkine_pos([0,0,0],qz))
+#
+# print(rotvec2tr(1, [0,1,0]))

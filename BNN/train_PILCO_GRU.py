@@ -30,12 +30,12 @@ parser.add_argument('--env_name', type=str, default='HalfCheetahTrack-v2')  #  A
 parser.add_argument('--max_timestep', type=int, default=1000)
 # Dynamics
 parser.add_argument('--hidden_size', type=int, default=200 )
-parser.add_argument('--num_hidden_layers', type=int, default=3)
-parser.add_argument('--num_itr_dyn', type=int, default=1000)  # epoch
+parser.add_argument('--num_hidden_layers', type=int, default=2)
+parser.add_argument('--num_itr_dyn', type=int, default=50)  # epoch
 parser.add_argument('--dyn_batch_size', type=int, default=1024)  # batch_size
 parser.add_argument('--lr_dynamics', type=float, default=1e-3)
 parser.add_argument('--drop_p', type=float, default=0.1)
-parser.add_argument('--dyn_reg2', type=float, default=0.00001  )
+parser.add_argument('--dyn_reg2', type=float, default=0.00001 )
 parser.add_argument('--pre_process', type=ast.literal_eval, default= True)
 parser.add_argument('--net_activation', type=str, default= 'relu')
 
@@ -43,8 +43,8 @@ parser.add_argument('--net_activation', type=str, default= 'relu')
 parser.add_argument('--n_rnd', type=int, default=10) #5
 parser.add_argument('--exp_num', type=str, default='1')#5
 parser.add_argument('--LengthOfCurve', type=int, default=100)
-parser.add_argument('--num_iter_policy', type=int, default=100 )
 parser.add_argument('--num_iter_algo', type=int, default=10)
+parser.add_argument('--num_iter_policy', type=int, default=100 )
 # Policy
 parser.add_argument('--lr_policy', type=float, default=1e-3)
 parser.add_argument('--policy_type', type=str, default='ActorModel')
@@ -52,6 +52,8 @@ parser.add_argument('--policy_type', type=str, default='ActorModel')
 
 args = parser.parse_args()
 print(args)
+
+shaping_state_delta = False
 
 
 env_name = args.env_name
@@ -76,7 +78,7 @@ lr_policy = args.lr_policy
 log_interval_policy = 10
 exp_name ='PILCO'
 num_exp =1
-log_name = 'train._{}_lrp{}_drop{}-EXP_{}'.format( exp_name,args.lr_policy,
+log_name = 'train._{}_lrp{}_drop{}-EXP_{}_GRU'.format( exp_name,args.lr_policy,
                                                      args.drop_p, num_exp )
 num_iter_algo =args.num_iter_algo
 
@@ -100,14 +102,14 @@ with open(log_dir + '/info.txt', 'wt') as f:
 env = gym.make(env_name)
 
 # Create dynamics model
-dynamics = BNN3(env, hidden_size=[hidden_size] *num_hidden_layers, drop_prob=drop_p, activation= net_activation).cuda()
+dynamics = BNN3(env, hidden_size=[hidden_size] *num_hidden_layers, drop_prob=drop_p, activation= net_activation, shaping_state_delta = shaping_state_delta).cuda()
 dynamics_optimizer =  torch.optim.Adam(dynamics.parameters(), lr= lr_dynamics, weight_decay=dyn_reg2 )
 
 # Create random policy
 randpol = controller.RandomPolicy(env)
 
 # Create Policy
-policy = controller.BNNPolicy(env, hidden_size=[200]*3, drop_prob=0.1, activation= 'relu') .cuda()
+policy = controller.BNNPolicyGRU(env, hidden_size=[64, 200,64], drop_prob=0.1, activation= 'relu') .cuda()
 policy_optimizer = optim.Adam(policy.parameters(), lr=lr_policy, weight_decay =1e-5 )  # 1e-2, RMSprop
 
 # initiation
@@ -127,7 +129,7 @@ for name, param in policy.named_parameters():
 
 
 # Create Data buffer
-exp_data = DataBuffer(env, max_trajectory = num_iter_algo +n_rnd)
+exp_data = DataBuffer(env, max_trajectory = num_iter_algo*10 +n_rnd,   shaping_state_delta = shaping_state_delta)
 
 
 # during first n_rnd trials, apply randomized controls
@@ -146,13 +148,13 @@ for i in range( num_iter_algo):
     log.infov('Policy optimization...' )
     
     for j in range(num_iter_policy):
-        _, list_costs, list_moments = learn_policy_pilco(env, dynamics, policy, policy_optimizer, K=K, T= T, gamma=0.99,
-                                                   moment_matching=True,   grad_norm = grad_clip, pre_prcess=True)
+        _, list_costs, list_moments = learn_policy_pilco(env, dynamics, policy, policy_optimizer, K=K, T= 1000, gamma=0.99,
+                                                   moment_matching=True,   grad_norm = grad_clip, pre_prcess=True , shaping_state_delta= shaping_state_delta)
 
         # Loggings
         if (j + 1) % log_interval_policy == 1 or (j + 1) == args.num_iter_policy:
 
-            loss_mean = torch.sum(torch.cat(list_costs)).data.cpu().numpy()[0]
+            loss_mean = torch.sum( torch.cat(list_costs)) .data.cpu().numpy()[0]
             grad_norm = _grad_norm(policy)
             log_str ='[Itr #{}/{} policy optim # {}/{} ]: loss mean: {:.5f},   grad norm:{:.3f}'
 
@@ -164,7 +166,9 @@ for i in range( num_iter_algo):
     log.info('Policy Test : # {}  cost mean {:.5f}  cost std {:.5f} '.format((i+1) ,cost_mean,cost_std ))
 
     # Execute system and record data
-    exp_data.push(rollout(env, policy, max_steps=T))
+    for num in range(10):
+        exp_data.push(rollout(env, policy, max_steps=T))
+    
     # Save model
     save_dir = log_dir
     utils.save_net_param(policy, save_dir, name='policy_'+str(i))

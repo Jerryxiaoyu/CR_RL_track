@@ -2,7 +2,7 @@ import gym
 import numpy as np
 
 from my_envs.mujoco import *
-
+from my_envs.cartpole_swingup import *
 """
 Env :
 --Classic :
@@ -50,6 +50,7 @@ Env :
 	
 	CellrobotEnv-v0
 	MotorTestEnv-v0
+	HalfCheetahTrack-v2
 """
 
 env = gym.make('HalfCheetahTrack-v2')  # Swimmer2-v2  SpaceInvaders-v0
@@ -70,6 +71,7 @@ print('state: ', env.observation_space)
 print('action: ', env.action_space)
 q_dim= 1
 obs=env.reset()
+print('obs = ', obs)
 action = np.zeros(q_dim)
 
 
@@ -92,6 +94,8 @@ act_force =[]
 #
 # while True:
 #     env.render()
+
+
 for i in range(T):
     action = env.action_space.sample()
     # action = disable_action(action,6)
@@ -103,8 +107,8 @@ for i in range(T):
     # action[-3] = -0.3
     
     #action[12] = Kp*(q_d - obs[12]) + Kv *(qdot_d - obs[12+13])
-    q.append(obs[:q_dim])
-    qacc.append(np.concatenate([env.env.data.qacc.flat]))
+#    q.append(obs[:q_dim])
+#    qacc.append(np.concatenate([env.env.data.qacc.flat]))
 
     next_obs, reward, done, _ = env.step(action)
     

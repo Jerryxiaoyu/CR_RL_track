@@ -4,6 +4,7 @@ from baselines.common.cmd_util import mujoco_arg_parser
 from baselines import bench, logger
 
 from my_envs.mujoco import *
+from my_envs.cartpole_swingup import  *
 import tensorflow as tf
 import os
 import time
@@ -14,7 +15,7 @@ dir = os.path.join(os.getcwd(),'log-files',
 def argsparser():
     parser = argparse.ArgumentParser("Tensorflow Implementation of MAML")
     
-    parser.add_argument('--env', help='environment ID', type=str, default='HalfCheetahTrack-v2')  # Reacher-v2
+    parser.add_argument('--env', help='environment ID', type=str, default='HalfCheetahTrack-v2')  # Reacher-v2  HalfCheetahTrack-v2
     parser.add_argument('--seed', help='RNG seed', type=int, default=0)
     parser.add_argument('--num-timesteps', type=int, default=int(5e6))
     
@@ -48,7 +49,7 @@ def train(env_id, num_timesteps, seed):
 
     set_global_seeds(seed)
     policy = MlpPolicy
-    ppo2.learn(policy=policy, env=env, nsteps=2048*10, nminibatches=32*10,
+    ppo2.learn(policy=policy, env=env, nsteps=2048*10 , nminibatches=32*10 ,
         lam=0.95, gamma=0.99, noptepochs=10, log_interval=1,
         ent_coef=0.0,
         lr=3e-4,

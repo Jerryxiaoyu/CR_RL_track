@@ -63,7 +63,7 @@ class MLPPolicy(nn.Module):
         return x # x
 
 
-class BNNPolicy(nn.Module):
+class BNNPolicyGRU(nn.Module):
     """
     Learning dynamics model via regression
 
@@ -71,7 +71,7 @@ class BNNPolicy(nn.Module):
 
     """
     
-    def __init__(self, env, hidden_size=[200] * 3, drop_prob=0.0, activation='relu'):
+    def __init__(self, env, hidden_size=[64] * 3, drop_prob=0.0, activation='relu'):
         super().__init__()
         
         self.env = env
@@ -89,44 +89,40 @@ class BNNPolicy(nn.Module):
         self.ouput_dim =  self.act_dim
         
         self.drop_prob = drop_prob
-        
-        if activation == 'relu':
-            self.activation = F.relu
-        elif activation == 'tanh':
-            self.activation = F.tanh
-        else:
-            print('error activation!!')
-        
+
+        self.sequence_length =1
+        self.batch_size =1
+        #self.rnn = nn.GRU(input_size=self.input_dim, hidden_size=hidden_size[0], num_layers= len(hidden_size), batch_first=True)
         self.dropout = torch.nn.Dropout(p=self.drop_prob)
+        
+        
         self.fc_layers = torch.nn.ModuleList()
         last_dim = self.input_dim
         for nh in hidden_size:
-            self.fc_layers.append(torch.nn.Linear(last_dim, nh))
+            self.fc_layers.append(nn.GRU(input_size=last_dim, hidden_size=nh,  batch_first=True))
             last_dim = nh
-        
         self.out_layer = torch.nn.Linear(last_dim, self.ouput_dim)
         
         self._set_init_param()
     
-    def forward(self, x, training=True ):
-        
-        
+    def forward(self, x, h0=None,  training=True ):
+        batch_size = x.shape[0]
+        x = x.view( batch_size, self.sequence_length, self.input_dim)
+  
         if self.sampling:
-            
             for i, affine in enumerate(self.fc_layers):
                 # Check if drop mask with correct dimension
                 if self.mask[i].size()[0] != x.size()[0]:
                     raise ValueError('Dimension of fixed masks must match the batch size.')
-                x = self.activation(affine(x))
+                x, hidden =  affine(x)
                 x = x * self.mask[i]
         else:
             for affine in self.fc_layers:
-                x = self.activation(affine(x))
-                x = self.dropout(x)
-        
+                x, hidden = affine(x)
+                x  = self.dropout(x)
         x = self.out_layer(x)
  
-        return x
+        return x.view((batch_size,-1))
     
     def set_sampling(self, sampling=None, batch_size=None):
         if sampling is None:
@@ -136,11 +132,8 @@ class BNNPolicy(nn.Module):
         
         if self.sampling:
             # Sample dropout random masks
-            
             for i, affine in enumerate(self.fc_layers):
-                self.mask[i] = Variable(
-                    torch.bernoulli(
-                        torch.zeros(batch_size, self.hidden_size[i]).fill_(1 - self.drop_prob))).cuda()
+                self.mask[i] = Variable(torch.bernoulli(torch.zeros(batch_size,self.sequence_length, self.hidden_size[i]).fill_(1 - self.drop_prob))).cuda()
                 # Rescale by 1/p to maintain output magnitude
                 self.mask[i] /= (1 - self.drop_prob)
     

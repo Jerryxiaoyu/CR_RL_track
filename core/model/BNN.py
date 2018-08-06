@@ -199,7 +199,7 @@ class BNN3(nn.Module):
     
     """
     
-    def __init__(self, env, hidden_size=[200]*3, drop_prob=0.0, activation='relu'):
+    def __init__(self, env, hidden_size=[200]*3, drop_prob=0.0, activation='relu', shaping_state_delta = False):
         super().__init__()
         
         
@@ -209,13 +209,18 @@ class BNN3(nn.Module):
         # Fix the random mask for dropout, each batch contains K particles
         self.mask = []
         self.hidden_size = hidden_size
+
+        self.shaping_state_delta = shaping_state_delta
+        self. shaping_state_constant = 9 if self.shaping_state_delta else 3
         
         for i in range(len(hidden_size)):
             self.mask.append(None)
         self.obs_dim = env.observation_space.shape[0]
         act_dim = env.action_space.shape[0]
         self.input_dim = self.obs_dim + act_dim
-        self.ouput_dim = self.obs_dim
+        self.ouput_dim = self.obs_dim - self.shaping_state_constant
+        
+        
         
         self.drop_prob = drop_prob
         
@@ -284,7 +289,7 @@ class BNN3(nn.Module):
         for param in self.parameters():
             nn.init.normal(param, mean=0, std=1e-2)
     def predict_Y(self, x , delta_target = True, pre_prcess = True):
-        state = x.clone()[:, :self.obs_dim]
+        state = x.clone()[:, :self.obs_dim- self.shaping_state_constant]
         if pre_prcess:
             # standardize inputs
             #x = torch.matmul(x - self.Xm, self.iXs)
@@ -296,7 +301,7 @@ class BNN3(nn.Module):
         if pre_prcess:
             # scale and center outputs
             #y= torch.matmul(y, self.Ys) +self.Ym
-            y = y * self.Ystd + self.Ym
+            y = y * self.Ystd[:self.obs_dim- self.shaping_state_constant] + self.Ym[:self.obs_dim- self.shaping_state_constant]
 
         if delta_target:
             y = y
@@ -320,7 +325,7 @@ class BNN3(nn.Module):
         return next_states
     def predict_samples(self, x , delta_target = True, pre_prcess = True ):
     
-        state = x.clone()[:, :self.obs_dim]
+        state = x.clone()[:, :self.obs_dim- self.shaping_state_constant]
         action = x.clone()[:,self.obs_dim :]
         if pre_prcess:
             # standardize inputs

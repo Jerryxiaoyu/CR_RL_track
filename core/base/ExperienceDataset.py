@@ -8,7 +8,7 @@ import numpy as np
 
 
 class DataBuffer(data.Dataset):
-    def __init__(self, env, max_trajectory= None):
+    def __init__(self, env, max_trajectory= None, shaping_state_delta = False):
         self.data = None
         self.observation_dim = env.observation_space.shape[0]
         self.action_dim = env.action_space.shape[0]
@@ -17,6 +17,11 @@ class DataBuffer(data.Dataset):
 
         self.max_trajectory = max_trajectory  # Same as DeepPILCO
         self.buffer = []
+        self.shaping_state_delta = shaping_state_delta
+        if self.shaping_state_delta:
+            self.shaping_state_constant = 9
+        else:
+            self.shaping_state_constant = 3
         
     def __len__(self):
         return self.data.shape[0]
@@ -30,8 +35,9 @@ class DataBuffer(data.Dataset):
         state = data[:self.observation_dim]
         target = data[self.observation_dim + self.action_dim:self.observation_dim*2+self.action_dim]
         
+        
         # return target data as difference between current and predicted state
-        return data[:self.observation_dim+self.action_dim], target - state
+        return data[:self.observation_dim+self.action_dim], target[:self.observation_dim-self.shaping_state_constant] - state[:self.observation_dim-self.shaping_state_constant]
     
     def push(self, D ):
         self.data_set.append(D)
