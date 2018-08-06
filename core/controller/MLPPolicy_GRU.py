@@ -150,7 +150,6 @@ class BNNPolicyGRU(nn.Module):
         
         # Forward pass
         y = self.forward(x )
-        
         if pre_prcess:
             # scale and center outputs
             # y= torch.matmul(y, self.Ys) +self.Ym

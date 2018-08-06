@@ -74,7 +74,7 @@ def cost_halfcheetah_com(states,   action=None, state_delat = False):
         
         
         motor_cost = 0.01 * torch.norm(action)
-        cost = torch.norm(com_delta) + torch.norm(foot1_delta ) + torch.norm(foot2_delta ) + motor_cost
+        cost = torch.norm(com_delta) + torch.norm(foot1_delta) + torch.norm(foot2_delta) #+ motor_cost
     return cost
 
  

@@ -53,13 +53,27 @@ def fkine_pos(com_point, q):
 def desired_Body(current_time, switch_time):
     
     qz =[0,0,0,0,0,0]
+    
     desired_speed = 0.2    #0.2m/s
+    
     
     com_p = [desired_speed*(current_time+switch_time), 0, 0 ]
 
     com, p1, p2 = fkine_pos(com_p, qz)
     
     return com, p1 ,p2
+
+
+def desired_Body_pos(pos_x):
+    qz = [0, 0, 0, 0, 0, 0]
+    
+    desired_speed = 0.2  # 0.2m/s
+    
+    com_p = [pos_x, 0, 0]
+    
+    com, p1, p2 = fkine_pos(com_p, qz)
+    
+    return com, p1, p2
 
 def _iner_test():
     import matplotlib.pyplot as plt

@@ -589,6 +589,7 @@ def test_episodic_cost2(env, policy, dynamics=None, N=1, T=1, render=False):
             # Update new state
             s = Variable(torch.Tensor(s_next ).unsqueeze(0)).cuda()
             
+            
             if render:
                 env.render()
         

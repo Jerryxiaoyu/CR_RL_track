@@ -1,22 +1,25 @@
 import numpy as np
 from gym import utils
 from my_envs.mujoco import mujoco_env
-from kinematics.cheetah_kine import desired_Body, fkine_pos
+from kinematics.cheetah_kine import desired_Body, fkine_pos,desired_Body_pos
 import math
 
 
 # goal_switch_time
-switch_time = 10.0
+switch_time = 1.0
 class HalfCheetahTrackEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     def __init__(self):
         self.delta = False
+        self.num_done = 0
         mujoco_env.MujocoEnv.__init__(self, 'half_cheetah.xml', 1)
         utils.EzPickle.__init__(self)
         
     def step(self, action):
         n_step = math.ceil(self.sim.data.time/self.dt)
-        if n_step % int(switch_time/self.dt) == 0:
+        if n_step % int(switch_time/self.dt) == 0:  # dependtant on time
             self.com_p_d, self.foot1_d, self.foot2_d = desired_Body(self.sim.data.time, switch_time)
+        # if n_step  == 0:  # dependtant on time
+        #     self.com_p_d, self.foot1_d, self.foot2_d = desired_Body_pos(0.5 * (self.num_done+1))
             # print('goal')
             # print(self.com_p_d, self.foot1_d,self.foot2_d)
             self.sim.model.site_pos[3] = np.array(self.com_p_d).reshape((1, -1))[0]
@@ -39,6 +42,21 @@ class HalfCheetahTrackEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         
         #print(reward_ctrl, reward_run, reward)
         done = False
+        if done:
+            print('done')
+        # if -reward_run < 0.2:
+        #     done = True
+        #     self.num_done += 1
+        #
+        #     self.com_p_d, self.foot1_d, self.foot2_d = desired_Body_pos(0.5 * (self.num_done + 1))
+        #     # print('goal')
+        #     # print(self.com_p_d, self.foot1_d,self.foot2_d)
+        #     self.sim.model.site_pos[3] = np.array(self.com_p_d).reshape((1, -1))[0]
+        #     self.sim.model.site_pos[4] = np.array(self.foot1_d).reshape((1, -1))[0]
+        #     self.sim.model.site_pos[5] = np.array(self.foot2_d).reshape((1, -1))[0]
+        #
+        # else:
+        #     done =False
         return ob, reward, done, dict(reward_run=reward_run, reward_ctrl=reward_ctrl)
 
     def _get_obs(self):

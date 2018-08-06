@@ -30,8 +30,8 @@ parser.add_argument('--env_name', type=str, default='HalfCheetahTrack-v2')  #  A
 parser.add_argument('--max_timestep', type=int, default=1000)
 # Dynamics
 parser.add_argument('--hidden_size', type=int, default=200 )
-parser.add_argument('--num_hidden_layers', type=int, default=3)
-parser.add_argument('--num_itr_dyn', type=int, default=1000)  # epoch
+parser.add_argument('--num_hidden_layers', type=int, default=2)
+parser.add_argument('--num_itr_dyn', type=int, default=50)  # epoch
 parser.add_argument('--dyn_batch_size', type=int, default=1024)  # batch_size
 parser.add_argument('--lr_dynamics', type=float, default=1e-3)
 parser.add_argument('--drop_p', type=float, default=0.1)
@@ -43,7 +43,7 @@ parser.add_argument('--net_activation', type=str, default= 'relu')
 parser.add_argument('--n_rnd', type=int, default=10) #5
 parser.add_argument('--exp_num', type=str, default='1')#5
 parser.add_argument('--LengthOfCurve', type=int, default=100)
-parser.add_argument('--num_iter_policy', type=int, default=100 )
+parser.add_argument('--num_iter_policy', type=int, default=50 )
 parser.add_argument('--num_iter_algo', type=int, default=10)
 # Policy
 parser.add_argument('--lr_policy', type=float, default=1e-3)
@@ -107,7 +107,7 @@ dynamics_optimizer =  torch.optim.Adam(dynamics.parameters(), lr= lr_dynamics, w
 randpol = controller.RandomPolicy(env)
 
 # Create Policy
-policy = controller.BNNPolicy(env, hidden_size=[200]*3, drop_prob=0.1, activation= 'relu') .cuda()
+policy = controller.BNNPolicy(env, hidden_size=[200]*3, drop_prob=0.1, activation= 'relu').cuda()
 policy_optimizer = optim.Adam(policy.parameters(), lr=lr_policy, weight_decay =1e-5 )  # 1e-2, RMSprop
 
 # initiation

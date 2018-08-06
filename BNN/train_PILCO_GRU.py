@@ -44,7 +44,7 @@ parser.add_argument('--n_rnd', type=int, default=10) #5
 parser.add_argument('--exp_num', type=str, default='1')#5
 parser.add_argument('--LengthOfCurve', type=int, default=100)
 parser.add_argument('--num_iter_algo', type=int, default=10)
-parser.add_argument('--num_iter_policy', type=int, default=100 )
+parser.add_argument('--num_iter_policy', type=int, default=50 )
 # Policy
 parser.add_argument('--lr_policy', type=float, default=1e-3)
 parser.add_argument('--policy_type', type=str, default='ActorModel')
@@ -85,7 +85,7 @@ num_iter_algo =args.num_iter_algo
 num_iter_policy = args.num_iter_policy
 grad_clip = 1
 
-K =20
+K = 20
 
 # Create log files
 log_dir = utils.configure_log_dir(env_name, txt=log_name,  No_time = False)
@@ -109,7 +109,7 @@ dynamics_optimizer =  torch.optim.Adam(dynamics.parameters(), lr= lr_dynamics, w
 randpol = controller.RandomPolicy(env)
 
 # Create Policy
-policy = controller.BNNPolicyGRU(env, hidden_size=[64, 200,64], drop_prob=0.1, activation= 'relu') .cuda()
+policy = controller.BNNPolicyGRU(env, hidden_size=[64,64,64], drop_prob=0.1, activation= 'relu').cuda()
 policy_optimizer = optim.Adam(policy.parameters(), lr=lr_policy, weight_decay =1e-5 )  # 1e-2, RMSprop
 
 # initiation
@@ -148,7 +148,7 @@ for i in range( num_iter_algo):
     log.infov('Policy optimization...' )
     
     for j in range(num_iter_policy):
-        _, list_costs, list_moments = learn_policy_pilco(env, dynamics, policy, policy_optimizer, K=K, T= 1000, gamma=0.99,
+        _, list_costs, list_moments = learn_policy_pilco(env, dynamics, policy, policy_optimizer, K=K, T= 100, gamma=0.99,
                                                    moment_matching=True,   grad_norm = grad_clip, pre_prcess=True , shaping_state_delta= shaping_state_delta)
 
         # Loggings
