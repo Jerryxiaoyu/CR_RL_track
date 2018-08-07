@@ -240,7 +240,6 @@ class BNN3(nn.Module):
         
         self.out_layer = torch.nn.Linear(last_dim, self.ouput_dim)
         
-        
         self._set_init_param()
     
     def forward(self, x, training=True,delta_target=True):

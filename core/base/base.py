@@ -10,13 +10,15 @@ import torch.optim as optim
 from core.shell.cost import cost, cost_halfcheetah, cost_halfcheetah_com
 from core.utils import log
 import matplotlib.pyplot as plt
+from core.controller import BNNPolicyGRU,BNNPolicyGRU_PPO
+
 #from MB.eval_model import plot_train, plot_train_std,load_data
 
 
 PLOT_EVERY_N_EPOCH =10
 LOG_EVERY_N_EPOCH =100
 
-def rollout(env, policy,  max_steps=100 , init_particle=None, render=False ):
+def rollout(env, policy,  max_steps=100 , init_particle=None, render=False, memory=None ):
     """Generate one trajectory , return transitions
     
     data : D+E+1
@@ -44,13 +46,25 @@ def rollout(env, policy,  max_steps=100 , init_particle=None, render=False ):
         # TODO Sometimes states need to be preprocessed!
 
         # Select an action by policy
-        a = policy(s)
+        
+        if isinstance(policy,BNNPolicyGRU):
+            a = policy.predict_Y(s)
+        elif isinstance(policy,BNNPolicyGRU_PPO):
+            a,_,_ = policy(s)
+        else:
+            a = policy(s)
         # excuate action
         s_next, reward, done, _ = env.step(a.data.cpu().numpy())
         cost = -reward
         # Record data
- 
-        data.append(np.concatenate([s.data.cpu().numpy()[0], a.data.cpu().numpy().squeeze(), s_next, np.array([cost])]))
+        mask = 0 if done else 1
+        data.append(np.concatenate([s.data.cpu().numpy()[0], a.data.cpu().numpy().squeeze(), s_next, np.array([reward]) , np.array([mask])]))
+
+        if memory is not None:
+            memory.push(s.data.cpu().numpy()[0], a.data.cpu().numpy().squeeze(),
+                        s_next, np.array([reward]),
+                        np.array([mask]))
+        
         # break if done
         if done:
             break
@@ -458,7 +472,8 @@ def learn_policy_pilco(env, dynamics, policy, policy_optimizer, K=1, T=1, gamma=
     
     goal = particles[:,-shaping_state_constant:]
     # Sample BNN dynamics: fixed dropout masks
-    # dynamics.set_sampling(sampling=True, batch_size=K)
+
+    
     
     dynamics.set_sampling(sampling=True,batch_size=K)
     dynamics.train()
@@ -473,7 +488,7 @@ def learn_policy_pilco(env, dynamics, policy, policy_optimizer, K=1, T=1, gamma=
         
         # K actions from policy given K particles
         policy.set_sampling(sampling=True, batch_size=K)
-        actions = policy(particles)
+        actions = policy.predict_Y(particles)
         # Concatenate particles and actions as inputs to Dynamics model
         state_actions = torch.cat((particles, actions ), 1)
         # Get next states from Bayesian Dynamics Model
@@ -501,10 +516,95 @@ def learn_policy_pilco(env, dynamics, policy, policy_optimizer, K=1, T=1, gamma=
         # costs = cost(torch.mean(particles, 0).unsqueeze(0), sigma=c_sigma)
         
       #  costs = cost_halfcheetah(torch.mean(particles_next,0).unsqueeze(0), torch.mean(particles,0).unsqueeze(0))
-        costs = cost_halfcheetah_com( torch.mean(particles, 0), torch.mean(actions,0).unsqueeze(0), state_delat = shaping_state_delta)
-
+        #costs = cost_halfcheetah_com( torch.mean(particles, 0), torch.mean(actions,0).unsqueeze(0), state_delat = shaping_state_delta)
+        particles_next = torch.cat((particles_next, goal), 1)
+        costs = cost_halfcheetah_com(torch.mean(particles_next,0) , torch.mean(particles,0) , torch.mean(actions, 0).unsqueeze(0),
+                                     state_delat=shaping_state_delta)
  
-        particles = torch.cat((particles_next,goal),1)
+        particles = particles_next
+        
+        # Append the list of discounted costs
+        list_costs.append((gamma ** (t + 1)) * costs)
+    
+    # Optimize policy
+    policy_optimizer.zero_grad()
+    # [optimizer.zero_grad() for optimizer in optimizers]
+    m = torch.cat(list_costs)
+    J = torch.sum(m)
+    J.backward(retain_graph=True)
+    
+    # for policy in policies[1:]:
+    #    for policy_param, cloned_param in zip(policies[0].parameters(), policy.parameters()):
+    #        policy_param.grad.data += cloned_param.grad.data.clone()
+    if grad_norm is not None:
+        nn.utils.clip_grad_norm(policy.parameters(), grad_norm)
+    # Original policy
+    policy_optimizer.step()
+    
+    return policy, list_costs, list_moments
+
+
+def learn_policy_pilco_PPO(env, dynamics, policy, policy_optimizer, K=1, T=1, gamma=0.99, init_particles=None,
+                       moment_matching=True, c_sigma=0.25, grad_norm=None, pre_prcess=True, shaping_state_delta=False):
+    # Particles for initial state
+    if init_particles is not None:
+        particles = Variable(torch.Tensor(init_particles)).cuda()
+    else:
+        particles = Variable(torch.Tensor([env.reset() for _ in range(K)])).cuda()
+    
+    shaping_state_constant = 9 if shaping_state_delta else 3
+    
+    goal = particles[:, -shaping_state_constant:]
+    # Sample BNN dynamics: fixed dropout masks
+    
+    dynamics.set_sampling(sampling=True, batch_size=K)
+    dynamics.train()
+    
+    policy.set_sampling(sampling=True, batch_size=K)
+    policy.train(mode=True)
+    # List of costs
+    list_costs = []
+    # list of mu and sigma
+    list_moments = []
+    for t in range(T):  # time steps
+        
+        # K actions from policy given K particles
+        policy.set_sampling(sampling=True, batch_size=K)
+        actions,_,_ = policy.predict_Y(particles)
+        # Concatenate particles and actions as inputs to Dynamics model
+        state_actions = torch.cat((particles, actions), 1)
+        # Get next states from Bayesian Dynamics Model
+        # next_states = dynamics(state_actions)
+        dynamics.set_sampling(sampling=True, batch_size=K)
+        next_states = dynamics.predict_Y(state_actions, delta_target=False, pre_prcess=pre_prcess)
+        # Moment matching
+        # Compute mean and standard deviation
+        if moment_matching:
+            mu = torch.mean(next_states, 0)
+            sigma = torch.std(next_states, 0)
+            # Standard normal noise for K particles
+            z = Variable(torch.randn(K, sigma.size(0))).cuda()
+            # Sample K new particles from a Gaussian by location-scale transformation/reparameterization
+            # TODO rewrite sigma
+            particles_next = mu + sigma * Variable(torch.ones((K, sigma.size(0)))).cuda()
+            
+            # Record mu and sigma
+            list_moments.append([mu, sigma])
+        else:
+            particles_next = next_states
+        
+        # Compute the mean cost for the particles in the current time step
+        # costs = torch.mean(cost(particles, sigma=c_sigma))
+        # costs = cost(torch.mean(particles, 0).unsqueeze(0), sigma=c_sigma)
+        
+        #  costs = cost_halfcheetah(torch.mean(particles_next,0).unsqueeze(0), torch.mean(particles,0).unsqueeze(0))
+        # costs = cost_halfcheetah_com( torch.mean(particles, 0), torch.mean(actions,0).unsqueeze(0), state_delat = shaping_state_delta)
+        particles_next = torch.cat((particles_next, goal), 1)
+        costs = cost_halfcheetah_com(torch.mean(particles_next, 0), torch.mean(particles, 0),
+                                     torch.mean(actions, 0).unsqueeze(0),
+                                     state_delat=shaping_state_delta)
+        
+        particles = particles_next
         
         # Append the list of discounted costs
         list_costs.append((gamma ** (t + 1)) * costs)
@@ -578,9 +678,12 @@ def test_episodic_cost2(env, policy, dynamics=None, N=1, T=1, render=False):
             # Xm = dynamics.Xm[:env.observation_space.shape[0]]
             # Xs = dynamics.Xstd[:env.observation_space.shape[0]]
             # s = (s - Xm) / Xs
-
+        
             # Select action via policy
-            a = policy(s).data.cpu().numpy()[0]
+            if isinstance(policy, BNNPolicyGRU_PPO):
+                a =policy.select_action(s).cpu().numpy()[0]
+            else:
+                a= policy.predict_Y(s).data.cpu().numpy()[0]
             # Take action in the environment
             s_next, r, done, info = env.step(a)
             # Record reward

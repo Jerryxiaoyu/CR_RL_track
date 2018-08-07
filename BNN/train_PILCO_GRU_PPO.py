@@ -10,13 +10,15 @@ import os
 from core.model.BNN import  BNN,BNN3
 from core import controller
 from core.base.ExperienceDataset import DataBuffer
-from core.base.base import train_dynamics_model,learn_policy,rollout,test_episodic_cost, train_dynamics_model_pilco, learn_policy_pilco,test_episodic_cost2
+from core.base.base import train_dynamics_model,learn_policy,rollout,test_episodic_cost, train_dynamics_model_pilco, learn_policy_pilco_PPO,test_episodic_cost2
 
 from core.utils.utils import _grad_norm
 from core.my_envs.cartpole_swingup import *
 from core import utils
-from core.utils import log,logging_output
+from core.utils import log,logging_output,Memory
 
+from ppo.ppo_base import update_PPO_params
+from ppo.models.mlp_critic import Value
 from my_envs.mujoco import *
 
 
@@ -26,7 +28,7 @@ parser = argparse.ArgumentParser(description='DeepPILCO')
 parser.add_argument('--seed', type=int, default=1)
 
 #ENV
-parser.add_argument('--env_name', type=str, default='HalfCheetahTrack-v2')  #  Ant2-v2  HalfCheetah-v2  ArmReacherEnv-v0  Hopper2-v2: Swimmer2-v2
+parser.add_argument('--env_name', type=str, default='HalfCheetahTrack-v2')  # HalfCheetah2-v2 Ant2-v2  HalfCheetah-v2  ArmReacherEnv-v0  Hopper2-v2: Swimmer2-v2
 parser.add_argument('--max_timestep', type=int, default=1000)
 # Dynamics
 parser.add_argument('--hidden_size', type=int, default=200 )
@@ -44,12 +46,12 @@ parser.add_argument('--n_rnd', type=int, default=10) #5
 parser.add_argument('--exp_num', type=str, default='1')#5
 parser.add_argument('--LengthOfCurve', type=int, default=100)
 parser.add_argument('--num_iter_algo', type=int, default=10)
-parser.add_argument('--num_iter_policy', type=int, default=50 )
+parser.add_argument('--num_iter_policy', type=int, default=100 )
 # Policy
 parser.add_argument('--lr_policy', type=float, default=1e-3)
 parser.add_argument('--policy_type', type=str, default='ActorModel')
 parser.add_argument('--policy_drop_p', type=float, default=0.1)
-parser.add_argument('--policy_dyn_reg2', type=float, default=1e-5) #1e-5
+parser.add_argument('--policy_dyn_reg2', type=float, default=0.00001 )
 
 args = parser.parse_args()
 print(args)
@@ -81,14 +83,27 @@ policy_dyn_reg2 = args.policy_dyn_reg2
 log_interval_policy = 10
 exp_name ='PILCO'
 num_exp =1
-log_name = 'train._{}_lrp{}_drop{}-EXP_{}_GRU'.format( exp_name,args.lr_policy,
+log_name = 'train._{}_lrp{}_drop{}-EXP_{}_GRU_PPO'.format( exp_name,args.lr_policy,
                                                      args.drop_p, num_exp )
 num_iter_algo =args.num_iter_algo
 
 num_iter_policy = args.num_iter_policy
-grad_clip = 1
 
+grad_clip = 1
 K = 20
+
+## PPO args
+ppo_args ={}
+
+ppo_args['gamma'] =0.99
+ppo_args['tau'] =0.85
+ppo_args['max_iter_num'] = 500
+ppo_args['optim_epochs'] =5
+ppo_args['optim_batch_size']=4096
+ppo_args['learning_rate'] =3e-4
+ppo_args['clip_epsilon']=0.2
+ppo_args['l2_reg']=1e-3
+
 
 # Create log files
 log_dir = utils.configure_log_dir(env_name, txt=log_name,  No_time = False)
@@ -100,47 +115,56 @@ with open(log_dir + '/info.txt', 'wt') as f:
     print('Hello World!\n', file=f)
     print(args, file=f)
  
+
 # Set up environment
 env = gym.make(env_name)
 
 # Create dynamics model
-dynamics = BNN3(env, hidden_size=[hidden_size] * num_hidden_layers, drop_prob=drop_p, activation= net_activation, shaping_state_delta = shaping_state_delta).cuda()
+dynamics = BNN3(env, hidden_size=[hidden_size] *num_hidden_layers, drop_prob=drop_p, activation= net_activation, shaping_state_delta = shaping_state_delta).cuda()
 dynamics_optimizer =  torch.optim.Adam(dynamics.parameters(), lr= lr_dynamics, weight_decay=dyn_reg2 )
 
 # Create random policy
 randpol = controller.RandomPolicy(env)
 
 # Create Policy
-
-policy = controller.BNNPolicyGRU(env, hidden_size=[64,64,64], drop_prob= policy_drop_p, activation= 'relu').cuda()
+policy = controller.BNNPolicyGRU_PPO(env, hidden_size=[64,64,64], drop_prob= policy_drop_p, log_std=-2.5).cuda()
 policy_optimizer = optim.Adam(policy.parameters(), lr=lr_policy, weight_decay =policy_dyn_reg2)  # 1e-2, RMSprop
 
 # initiation
-for name, param in policy.named_parameters():
-    #print(name)
-    if name.find('weight') != -1:
-        # weight init
-        nn.init.orthogonal(param)
-        #nn.init.normal(param, mean=0, std=1e-2)
-        #print(param)
-    elif name.find('bias') != -1:
-        # bias init
-        nn.init.normal(param, mean=0, std=1e-2)
-        #print(param)
-    else:
-        print('Init error')
+# for name, param in policy.named_parameters():
+#     print(name)
+#     if name.find('weight') != -1:
+#         # weight init
+#         nn.init.orthogonal(param)
+#         #nn.init.normal(param, mean=0, std=1e-2)
+#         #print(param)
+#     elif name.find('bias') != -1:
+#         # bias init
+#         nn.init.normal(param, mean=0, std=1e-2)
+#         #print(param)
+#     else:
+#         #raise('Net params Init error')
+#         print('error')
 
+
+## PPO init
+state_dim = env.observation_space.shape[0]
+value_net = Value(state_dim).cuda()
+optimizer_value = torch.optim.Adam(value_net.parameters(), lr=ppo_args['learning_rate'])
 
 # Create Data buffer
 exp_data = DataBuffer(env, max_trajectory = num_iter_algo*10 +n_rnd,   shaping_state_delta = shaping_state_delta)
-
+memory = Memory()
 
 # during first n_rnd trials, apply randomized controls
 for i in range(n_rnd):
-    exp_data.push(rollout(env, randpol, max_steps=T))
-
+    exp_data.push(rollout(env, randpol, max_steps=T, memory=memory))
+ 
 #cost_mean ,cost_std = test_episodic_cost(env, policy, N=50, T=T, render=False)
 
+policy_PPOoptimizer = torch.optim.Adam(policy.parameters(), lr=ppo_args['learning_rate'])
+# update_PPO_params(memory.sample(), 0, value_net, policy,optimizer_value, policy_PPOoptimizer,  ppo_args)
+update_PPO_params(memory.sample(), 0, value_net, policy, optimizer_value, policy_PPOoptimizer, ppo_args)
 
 for i in range( num_iter_algo):
     log.infov('-----------------DeepPILCO Iteration # {}-----------------'.format(i+1))
@@ -149,10 +173,10 @@ for i in range( num_iter_algo):
 
     # Update policy
     log.infov('Policy optimization...' )
-
+    
     policy.update_dataset_statistics(exp_data)
     for j in range(num_iter_policy):
-        _, list_costs, list_moments = learn_policy_pilco(env, dynamics, policy, policy_optimizer, K=K, T= 1000, gamma=0.99,
+        _, list_costs, list_moments = learn_policy_pilco_PPO(env, dynamics, policy, policy_optimizer, K=K, T= 1000, gamma=0.99,
                                                    moment_matching=True,   grad_norm = grad_clip, pre_prcess=True , shaping_state_delta= shaping_state_delta)
 
         # Loggings
@@ -165,13 +189,19 @@ for i in range( num_iter_algo):
             log.info(log_str.format( (i+1),args.num_iter_algo,
                                   (j+1),args.num_iter_policy,
                                   loss_mean,   grad_norm ))
-
+    
+    
+    
     cost_mean ,cost_std = test_episodic_cost2(env, policy,dynamics, N=5, T=T, render=True)
     log.info('Policy Test : # {}  cost mean {:.5f}  cost std {:.5f} '.format((i+1) ,cost_mean,cost_std ))
 
     # Execute system and record data
     for num in range(10):
-        exp_data.push(rollout(env, policy, max_steps=T))
+        exp_data.push(rollout(env, policy, max_steps=T, memory=memory))
+
+    # Execute system and record data
+    update_PPO_params(memory.sample(), i, value_net, policy, optimizer_value, policy_PPOoptimizer, ppo_args)
+    
     
     # Save model
     save_dir = log_dir

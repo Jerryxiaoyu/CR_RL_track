@@ -45,7 +45,7 @@ def cost_halfcheetah(states, last_states, action=None):
     return cost
 
 
-def cost_halfcheetah_com(states,   action=None, state_delat = False):
+def cost_halfcheetah_com(states,  last_states, action=None, state_delat = False):
     """Pendulum-v0: Same as OpenAI-Gym"""
     #states = Variable(torch.zeros(21)).cuda()
     
@@ -63,9 +63,10 @@ def cost_halfcheetah_com(states,   action=None, state_delat = False):
         foot1_d[0] =states[-2]
         foot2_d[0] = states[-1]
         
+        speed = (states[0] - last_states[0])/0.01
         
-        motor_cost = 0.01 * torch.norm(action)
-        cost = torch.norm(com - com_d)+torch.norm(foot1 - foot1_d)+torch.norm(foot2 - foot2_d) #+ motor_cost
+        motor_cost = 0.1 * torch.norm(action)
+        cost = torch.norm(com - com_d)+torch.norm(foot1 - foot1_d)+torch.norm(foot2 - foot2_d)  - 0.01*speed   + motor_cost
         
     else:
         foot2_delta = states[-3:]

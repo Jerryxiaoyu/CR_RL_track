@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.nn import init
 import torch.nn.functional as F
-
+import math
 
 class MLPPolicy(nn.Module):
     """MLP Policy for the controller"""
@@ -61,16 +61,20 @@ class MLPPolicy(nn.Module):
         x = torch.clamp(x[:, 0], self.env.action_space.low[0], self.env.action_space.high[0])
         
         return x # x
+def normal_log_density(x, mean, log_std, std):
+    var = std.pow(2)
+    log_density = -(x - mean).pow(2) / (2 * var) - 0.5 * math.log(2 * math.pi) - log_std
+    return log_density.sum(1, keepdim=True)
 
 
-class BNNPolicyGRU(nn.Module):
+class BNNPolicyGRU_PPO(nn.Module):
     """
     Learning dynamics model via regression
 
     fro complex module
 
     """
-    def __init__(self, env, hidden_size=[64] * 3, drop_prob=0.0, activation='relu'):
+    def __init__(self, env, hidden_size=[64] * 3, drop_prob=0.0, log_std= 0):
         super().__init__()
         
         self.env = env
@@ -100,9 +104,15 @@ class BNNPolicyGRU(nn.Module):
         for nh in hidden_size:
             self.fc_layers.append(nn.GRU(input_size=last_dim, hidden_size=nh,  batch_first=True))
             last_dim = nh
-        self.out_layer = torch.nn.Linear(last_dim, self.ouput_dim)
-        
+
         self._set_init_param()
+        self.action_mean = nn.Linear(last_dim, self.ouput_dim)
+        self.action_mean.weight.data.mul_(0.1)
+        self.action_mean.bias.data.mul_(0.0)
+
+        self.action_log_std = nn.Parameter(torch.ones(1, self.ouput_dim ) * log_std)
+        
+        
     
     def forward(self, x, h0=None,  training=True ):
         batch_size = x.shape[0]
@@ -119,9 +129,24 @@ class BNNPolicyGRU(nn.Module):
             for affine in self.fc_layers:
                 x, hidden = affine(x)
                 x  = self.dropout(x)
-        x = self.out_layer(x)
+         
+
+        action_mean = self.action_mean(x).view((batch_size,-1))
+        action_log_std = self.action_log_std.expand_as(action_mean)
+        action_std = torch.exp(action_log_std)
  
-        return x.view((batch_size,-1))
+        return action_mean, action_log_std, action_std
+
+    def select_action(self, x):
+        action_mean, _, action_std = self.predict_Y(x)
+        
+        action = torch.normal(action_mean, action_std)
+    
+        return action.data
+
+    def get_log_prob(self, x, actions):
+        action_mean, action_log_std, action_std = self.forward(x)
+        return normal_log_density(actions, action_mean, action_log_std, action_std)
     
     def set_sampling(self, sampling=None, batch_size=None):
         if sampling is None:
@@ -144,8 +169,8 @@ class BNNPolicyGRU(nn.Module):
         if pre_prcess:
             x = (x - self.Xm) / self.Xstd
         # Forward pass
-        y = self.forward(x )
-        return y
+        action_mean, action_log_std, action_std = self.forward(x )
+        return action_mean, action_log_std, action_std
  
     
     def update_dataset_statistics(self, exp_dataset):

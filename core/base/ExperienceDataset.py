@@ -3,9 +3,10 @@ import torch.utils.data as data
 from torch.autograd import Variable
 
 import numpy as np
-
-
-
+from collections import namedtuple
+import random
+Transition = namedtuple('Transition', ('state', 'action',   'next_state',
+                                       'reward','mask'))
 
 class DataBuffer(data.Dataset):
     def __init__(self, env, max_trajectory= None, shaping_state_delta = False):
@@ -22,7 +23,9 @@ class DataBuffer(data.Dataset):
             self.shaping_state_constant = 9
         else:
             self.shaping_state_constant = 3
-        
+
+        self.memory = []
+
     def __len__(self):
         return self.data.shape[0]
     
@@ -42,6 +45,9 @@ class DataBuffer(data.Dataset):
     def push(self, D ):
         self.data_set.append(D)
 
+        # self.memory_push(D[:,:self.observation_dim], D[:,self.observation_dim: self.observation_dim+self.action_dim],
+        #                  D[:,self.observation_dim +self.action_dim :self.observation_dim*2+self.action_dim], D[:,-2],D[:,-1])
+
         self.buffer.append(D)
         if self.max_trajectory is not None:
             if len(self.buffer) > self.max_trajectory:
@@ -50,6 +56,15 @@ class DataBuffer(data.Dataset):
         self.data = np.concatenate(self.buffer, axis=0)
         np.random.shuffle(self.data)
     
+    def memory_push(self, *args):
+        """Saves a transition."""
+        self.memory.append(Transition(*args))
+    def sample(self, batch_size=None):
+        if batch_size is None:
+            return Transition(*zip(*self.memory))
+        else:
+            random_batch = random.sample(self.memory, batch_size)
+            return Transition(*zip(*random_batch))
    
  
 

@@ -30,9 +30,11 @@ T =1000
 env = gym.make(env_name)
 
 # Create Policy
-policy = controller.BNNPolicyGRU(env, hidden_size=[64, 200,64], drop_prob=0.1, activation= 'relu') .cuda()
+#policy = controller.BNNPolicyGRU(env, hidden_size=[64, 64,64], drop_prob=0.1, activation= 'relu') .cuda()
+policy = controller.BNNPolicyGRU_PPO(env, hidden_size=[64,64,64], drop_prob= 0.1, log_std=-2.5).cuda()
+
 #policy_optimizer = optim.Adam(policy.parameters(), lr=lr_policy, weight_decay =1e-5 )  # 1e-2, RMSprop
-policy.load_state_dict(torch.load('log-files/HalfCheetahTrack-v2/Aug-06_10:49:26train._PILCO_lrp0.001_drop0.1-EXP_1_GRU/policy_0.pkl'))
+policy.load_state_dict(torch.load('log-files/HalfCheetahTrack-v2/Aug-06_21:43:53train._PILCO_lrp0.001_drop0.1-EXP_1_GRU_PPO/policy_9.pkl'))
 
 
 cost_mean ,cost_std = test_episodic_cost2(env, policy,  N=5, T=T, render=True)
